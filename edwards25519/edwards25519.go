@@ -843,6 +843,30 @@ func geMixedSub(r *CompletedGroupElement, p *ExtendedGroupElement, q *PreCompute
 	FeAdd(&r.T, &t0, &r.T)
 }
 
+// r = 8 * t
+func GeMul8(r *CompletedGroupElement, t *ExtendedGroupElement) {
+	var u ProjectiveGroupElement
+	t.Double(r)
+	r.ToProjective(&u)
+	u.Double(r)
+	r.ToProjective(&u)
+	u.Double(r)
+}
+
+// caches s into an array of CachedGroupElements for scalar multiplication later
+func GePrecompute(r *[8]CachedGroupElement, s *ExtendedGroupElement) {
+	var t CompletedGroupElement
+	var s2, u ExtendedGroupElement
+	s.ToCached(&r[0])
+	s.Double(&t)
+	t.ToExtended(&s2)
+	for i := 0; i < 7; i++ {
+		geAdd(&t, &s2, &r[i])
+		t.ToExtended(&u)
+		u.ToCached(&r[i+1])
+	}
+}
+
 func slide(r *[256]int8, a *[32]byte) {
 	for i := range r {
 		r[i] = int8(1 & (a[i>>3] >> uint(i&7)))
@@ -881,21 +905,12 @@ func GeDoubleScalarMultVartime(r *ProjectiveGroupElement, a *[32]byte, A *Extend
 	var aSlide, bSlide [256]int8
 	var Ai [8]CachedGroupElement // A,3A,5A,7A,9A,11A,13A,15A
 	var t CompletedGroupElement
-	var u, A2 ExtendedGroupElement
+	var u ExtendedGroupElement
 	var i int
 
 	slide(&aSlide, a)
 	slide(&bSlide, b)
-
-	A.ToCached(&Ai[0])
-	A.Double(&t)
-	t.ToExtended(&A2)
-
-	for i := 0; i < 7; i++ {
-		geAdd(&t, &A2, &Ai[i])
-		t.ToExtended(&u)
-		u.ToCached(&Ai[i+1])
-	}
+	GePrecompute(&Ai, A)
 
 	r.Zero()
 
@@ -926,6 +941,45 @@ func GeDoubleScalarMultVartime(r *ProjectiveGroupElement, a *[32]byte, A *Extend
 
 		t.ToProjective(r)
 	}
+}
+
+// sets r = a*A + b*B
+// where Bi is the [8]CachedGroupElement consisting of
+// B,3B,5B,7B,9B,11B,13B,15B
+func GeDoubleScalarMultPrecompVartime(r *ProjectiveGroupElement, a *[32]byte, A *ExtendedGroupElement, b *[32]byte, Bi [8]CachedGroupElement) {
+	var aSlide, bSlide [256]int8
+	var Ai [8]CachedGroupElement // A,3A,5A,7A,9A,11A,13A,15A
+	var t CompletedGroupElement
+	var u ExtendedGroupElement
+	var i int
+	slide(&aSlide, a)
+	slide(&bSlide, b)
+	GePrecompute(&Ai, A)
+	r.Zero()
+	for i = 255; i >= 0; i-- {
+		if aSlide[i] != 0 || bSlide[i] != 0 {
+			break
+		}
+	}
+	for ; i >= 0; i-- {
+		r.Double(&t)
+		if aSlide[i] > 0 {
+			t.ToExtended(&u)
+			geAdd(&t, &u, &Ai[aSlide[i]/2])
+		} else if aSlide[i] < 0 {
+			t.ToExtended(&u)
+			geSub(&t, &u, &Ai[(-aSlide[i])/2])
+		}
+		if bSlide[i] > 0 {
+			t.ToExtended(&u)
+			geAdd(&t, &u, &Bi[bSlide[i]/2])
+		} else if bSlide[i] < 0 {
+			t.ToExtended(&u)
+			geSub(&t, &u, &Bi[(-bSlide[i])/2])
+		}
+		t.ToProjective(r)
+	}
+	return
 }
 
 // equal returns 1 if b == c and 0 otherwise.
