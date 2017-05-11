@@ -1,7 +1,6 @@
 package edwards25519
 
 import (
-	"bytes"
 	"encoding/hex"
 	"testing"
 )
@@ -10,6 +9,97 @@ func HexToBytes(h string) (result [32]byte) {
 	byteSlice, _ := hex.DecodeString(h)
 	copy(result[:], byteSlice)
 	return
+}
+
+func TestScMulSub(t *testing.T) {
+	tests := []struct {
+		name    string
+		aHex    string
+		bHex    string
+		cHex    string
+		wantHex string
+	}{
+		{
+			name:    "simple",
+			aHex:    "0100000000000000000000000000000000000000000000000000000000000000",
+			bHex:    "0100000000000000000000000000000000000000000000000000000000000000",
+			cHex:    "0200000000000000000000000000000000000000000000000000000000000000",
+			wantHex: "0100000000000000000000000000000000000000000000000000000000000000",
+		},
+		{
+			name:    "more complex",
+			aHex:    "1000000000000000000000000000000000000000000000000000000000000000",
+			bHex:    "1000000000000000000000000000000000000000000000000000000000000000",
+			cHex:    "0002000000000000000000000000000000000000000000000000000000000000",
+			wantHex: "0001000000000000000000000000000000000000000000000000000000000000",
+		},
+		{
+			name:    "more complex",
+			aHex:    "0000000000000000000000000000000000000000000000000000000000000010",
+			bHex:    "0000000000000000000000000000000000000000000000000000000000000010",
+			cHex:    "0000000000000000000000000000000000000000000000000000000000000000",
+			wantHex: "844ae3b1946c2475b8f95e806867dbac410ae82d8c1331c265cf83e4be664c0e",
+		},
+	}
+	for _, test := range tests {
+		a := HexToBytes(test.aHex)
+		b := HexToBytes(test.bHex)
+		c := HexToBytes(test.cHex)
+		want := HexToBytes(test.wantHex)
+		var got [32]byte
+		ScMulSub(&got, &a, &b, &c)
+		if want != got {
+			t.Errorf("%s: want %x, got %x", test.name, want, got)
+		}
+	}
+}
+
+func TestScalarMult(t *testing.T) {
+	tests := []struct {
+		name      string
+		scalarHex string
+		pointHex  string
+		wantHex   string
+	}{
+		{
+			name:      "zero",
+			scalarHex: "0000000000000000000000000000000000000000000000000000000000000000",
+			pointHex:  "0100000000000000000000000000000000000000000000000000000000000000",
+			wantHex:   "0100000000000000000000000000000000000000000000000000000000000000",
+		},
+		{
+			name:      "basepoint * 1",
+			scalarHex: "0100000000000000000000000000000000000000000000000000000000000000",
+			pointHex:  "5866666666666666666666666666666666666666666666666666666666666666",
+			wantHex:   "5866666666666666666666666666666666666666666666666666666666666666",
+		},
+		{
+			name:      "basepoint * 8",
+			scalarHex: "0800000000000000000000000000000000000000000000000000000000000000",
+			pointHex:  "5866666666666666666666666666666666666666666666666666666666666666",
+			wantHex:   "b4b937fca95b2f1e93e41e62fc3c78818ff38a66096fad6e7973e5c90006d321",
+		},
+		{
+			name:      "basepoint * 2",
+			scalarHex: "0200000000000000000000000000000000000000000000000000000000000000",
+			pointHex:  "2f1132ca61ab38dff00f2fea3228f24c6c71d58085b80e47e19515cb27e8d047",
+			wantHex:   "b4b937fca95b2f1e93e41e62fc3c78818ff38a66096fad6e7973e5c90006d321",
+		},
+	}
+	for _, test := range tests {
+		scalarBytes := HexToBytes(test.scalarHex)
+		pointBytes := HexToBytes(test.pointHex)
+		want := HexToBytes(test.wantHex)
+		point := new(ExtendedGroupElement)
+		point.FromBytes(&pointBytes)
+		result := new(ProjectiveGroupElement)
+		GeScalarMult(result, &scalarBytes, point)
+		var got [32]byte
+		result.ToBytes(&got)
+		if want != got {
+			t.Errorf("%s: want %x, got %x", test.name, want, got)
+		}
+	}
 }
 
 func TestGeMul8(t *testing.T) {
@@ -32,15 +122,17 @@ func TestGeMul8(t *testing.T) {
 	for _, test := range tests {
 		pointBytes := HexToBytes(test.pointHex)
 		want := HexToBytes(test.wantHex)
-		point := new(ExtendedGroupElement)
-		point.FromBytes(&pointBytes)
-		tmp := new(CompletedGroupElement)
+		tmp := new(ExtendedGroupElement)
+		tmp.FromBytes(&pointBytes)
+		point := new(ProjectiveGroupElement)
+		tmp.ToProjective(point)
+		tmp2 := new(CompletedGroupElement)
 		result := new(ExtendedGroupElement)
 		var got [32]byte
-		GeMul8(tmp, point)
-		tmp.ToExtended(result)
+		GeMul8(tmp2, point)
+		tmp2.ToExtended(result)
 		result.ToBytes(&got)
-		if bytes.Compare(want[:], got[:]) != 0 {
+		if want != got {
 			t.Errorf("%s: want %x, got %x", test.name, want, got)
 		}
 	}
@@ -94,7 +186,7 @@ func TestGeDoubleScalarMultVartime(t *testing.T) {
 		GeDoubleScalarMultVartime(result, &a, point, &b)
 		var got [32]byte
 		result.ToBytes(&got)
-		if bytes.Compare(want[:], got[:]) != 0 {
+		if want != got {
 			t.Errorf("%s: want %x, got %x", test.name, want, got)
 		}
 	}
@@ -158,7 +250,7 @@ func TestGeDoubleScalarMultPrecompVartime(t *testing.T) {
 		GeDoubleScalarMultPrecompVartime(result, &a, point1, &b, &point2Precomp)
 		var got [32]byte
 		result.ToBytes(&got)
-		if bytes.Compare(want[:], got[:]) != 0 {
+		if want != got {
 			t.Errorf("%s: want %x, got %x", test.name, want, got)
 		}
 	}
